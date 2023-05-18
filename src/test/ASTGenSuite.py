@@ -42,7 +42,7 @@ class ASTGenSuite(unittest.TestCase):
     def test_more_complex_program(self):
         """More complex program"""
         input = """main: function void () {
-            printInteger(4);
+            a : array [3] of integer = {1,2,3};
         }"""
         expect = """Program([
 	FuncDecl(main, VoidType, [], None, BlockStmt([]))

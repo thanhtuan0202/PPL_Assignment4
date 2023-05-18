@@ -114,6 +114,8 @@ class Emitter():
         frame.pop()
         if type(in_) is IntegerType:
             return self.jvm.emitIASTORE()
+        elif type(in_) is FloatType:
+            return self.jvm.emitFASTORE()
         # elif type(in_) is cgen.ArrayPointerType or type(in_) is cgen.ClassType or type(in_) is StringType:
         elif type(in_) is ClassType or type(in_) is StringType:
             return self.jvm.emitAASTORE()
@@ -137,7 +139,53 @@ class Emitter():
         # frame: Frame
 
         return self.jvm.emitVAR(in_, varName, self.getJVMType(inType), fromLabel, toLabel)
+    
+    
+    def emitNewArray(self,typ,flag):
+        if flag:
+            return self.jvm.emitNEWARRAY(self.getFullType(typ)) + self.jvm.emitAASTORE()
+        else:
+            return self.jvm.emitNEWARRAY(self.getFullType(typ))
+    def emitInitNewStaticArray(self, name, dimension, typ, frame):
+        result = []
+        if dimension.len() is 1:
+            result.append(self.emitPUSHICONST(dimension[0], frame))
+            frame.pop()
+            if type(typ) is StringType:
+                result.append(self.jvm.emitANEWARRAY(self.getFullType(typ)))
+            else:
+                result.append(self.jvm.emitNEWARRAY(self.getFullType(typ)))
+            result.append(self.jvm.emitPUTSTATIC(name, self.getJVMType(ArrayType(dimension[0],typ))))
+        else:
+            result.append(self.emitPUSHICONST(dimension[0], frame))
+            frame.pop()
+            result.append(self.jvm.emitANEWARRAY(self.getFullType(typ)))
+            result.append(self.jvm.emitPUTSTATIC(name, self.getJVMType(ArrayType(dimension[0],typ))))
+        return ''.join(result)
 
+    def emitInitNewLocalArray(self, addressIndex, name,dimension, typ, frame):
+        result = []
+        # if type(typ) is StringType:
+        #     result.append(self.jvm.emitANEWARRAY(self.getFullType(typ)))
+        # else:
+        #     result.append(self.jvm.emitNEWARRAY(self.getFullType(typ)))
+        # result.append(self.jvm.emitASTORE(addressIndex))
+        if dimension.len() is 1:
+            result.append(self.emitPUSHICONST(dimension[0], frame))
+            frame.pop()
+            if type(typ) is StringType:
+                result.append(self.jvm.emitANEWARRAY(self.getFullType(typ)))
+            else:
+                result.append(self.jvm.emitNEWARRAY(self.getFullType(typ)))
+            result.append(self.emitWRITEVAR(name,typ,addressIndex,frame))
+        else:
+            result.append(self.emitPUSHICONST(dimension[0], frame))
+            frame.pop()
+            result.append(self.jvm.emitANEWARRAY(self.getFullType(typ)))
+            result.append(self.emitWRITEVAR(name,typ,addressIndex,frame))        
+        
+        return ''.join(result)
+        
     def emitREADVAR(self, name, inType, index, frame):
         # name: String
         # inType: Type
@@ -148,6 +196,10 @@ class Emitter():
         frame.push()
         if type(inType) is IntegerType:
             return self.jvm.emitILOAD(index)
+        elif type(inType) is FloatType:
+            return self.jvm.emitFLOAD(index)
+        elif type(inType) is ArrayType:
+            return self.jvm.emitALOAD(index)
         # elif type(inType) is cgen.ArrayPointerType or type(inType) is cgen.ClassType or type(inType) is StringType:
         elif type(inType) is ClassType or type(inType) is StringType:
             return self.jvm.emitALOAD(index)
@@ -184,13 +236,13 @@ class Emitter():
         if type(inType) is IntegerType:
             return self.jvm.emitISTORE(index)
         # elif type(inType) is cgen.ArrayPointerType or type(inType) is cgen.ClassType or type(inType) is StringType:
-        elif type(inType) is ClassType or type(inType) is StringType:
+        elif type(inType) is ArrayType or type(inType) is StringType:
             return self.jvm.emitASTORE(index)
         else:
             raise IllegalOperandException(name)
 
     ''' generate the second instruction for array cell access
-    *
+    * 
     '''
 
     def emitWRITEVAR2(self, name, typ, frame):

@@ -5,7 +5,7 @@ from Frame import Frame
 from abc import ABC
 from Visitor import *
 from AST import *
-
+from MachineCode import JasminCode
 
 
 class MType:
@@ -30,8 +30,7 @@ class CodeGenerator:
 
     def init(self):
         return [Symbol("readInteger", MType(list(), IntegerType()), CName(self.libName)),
-                Symbol("printInteger", MType([IntegerType()],
-                       VoidType()), CName(self.libName))
+                Symbol("printInteger", MType([IntegerType()],VoidType()), CName(self.libName))
                 ]
 
     def gen(self, ast, path):
@@ -85,10 +84,10 @@ class CodeGenVisitor(Visitor):
         staticDecl = self.env
         for x in ast.decls:
             if type(x) is FuncDecl:
-                partype = [i.varType for i in x.params]
+                partype = [i.typ for i in x.params]
                 staticDecl = [Symbol(x.name.lower(), MType(partype, x.return_type), CName(self.className))] + staticDecl
             else:
-                newSym = self.visit(x, SubBody(None, None, isGlobal=True))
+                newSym = self.visit(x, SubBody(None, None))
                 staticDecl = [newSym] + staticDecl
         c = SubBody(None, staticDecl)
         [self.visit(x, c) for x in ast.decls if type(x) is FuncDecl]
@@ -160,24 +159,111 @@ class CodeGenVisitor(Visitor):
         subctxt = o
         frame = o.frame
         varName = ast.name
-        varType = ast.typ
+        typ = ast.typ
         #global variable
         if o.frame is None:
-            self.emit.printout(self.emit.emitATTRIBUTE(varName, varType, False, ast.init if ast.init is not None else ""))
-            if type(ast.typ) is ArrayType: 
-                self.listGlobalArray.append(ast)
-            return Symbol(varName, varType, CName(self.className))
-        # params or local variables
-        idx = frame.getNewIndex()
-        self.emit.printout(self.emit.emitVAR(idx, varName, varType, frame.getStartLabel(), frame.getEndLabel(), frame))
-        return SubBody(frame, [Symbol(varName, varType, Index(idx))] + subctxt.sym)   
+            if type(ast.typ) is ArrayType:
+                if typ.dimensions.len() == 1:
+                    self.emit.printout(self.emit.emitInitNewStaticArray(ast.name,ast.typ.dimensions,ast.typ.typ,frame))
+                    if ast.init is not None:
+                        explist = ast.init.explist
+                        res = []
+                        subctxt.sym = subctxt.sym + Symbol(ast.name, ast.typ, CName(self.className))
+                        lc = self.emit.emitGETSTATIC(self.className + "." + ast.name,typ,o.frame  )
+                        res.append(lc)
+                        for x in range(typ.dimensions[0]):
+                            res.append(self.emit.emitPUSHICONST(x,frame))
+                            ec,et = self.visit(explist[x],Access(frame,o.sym,False,False))
+                            if type(typ.typ) is FloatType and type(et) is IntegerType:
+                                ec = ec + self.emit.emitI2F(frame)
+                            res.append(ec)
+                            res.append(self.emit.emitASTORE())
+                        self.emit.printout(res)
+                else:
+                    self.emit.printout(self.emit.emitInitNewStaticArray(ast.name,ast.typ.dimensions,ast.typ.typ,frame))
+                    res = []
+                    lc = self.emit.emitGETSTATIC(self.className + "." + ast.name,typ,o.frame  )
+                    res.append(lc)
+                    if ast.init is not None:
+                        explist = ast.init.explist    
+                    for x in range(ast.typ.dimensions[0]):
+                        res.append(self.emit.emitPUSHICONST(x,frame))
+                        res.append(self.emit.emitPUSHICONST(ast.typ.dimensions[1],frame))
+                        if ast.init is None:
+                            res.append(self.emit.emitNewArray(typ.typ),True)    
+                        else:
+                            res.append(self.emit.emitNewArray(typ.typ),False)
+                            subexp = explist[x].explist
+                            for idx in range(typ.dimensions[1]):
+                                res.append(self.emit.emitDUP())
+                                res.append(self.emit.emitPUSHICONST(idx,frame))
+                                ec,et = self.visit(subexp[idx],Access(frame,o.sym,False,False))
+                                if type(typ.typ) is FloatType and type(et) is IntegerType:
+                                    ec = ec + self.emit.emitI2F()
+                                res.append(ec)
+                                res.append(self.emit.emitASTORE(typ.typ,frame))
+                            res.append(self.emit.emitASTORE(typ.typ,frame))
+            else:
+                self.emit.printout(self.emit.emitATTRIBUTE(ast.name, ast.typ, False, ""))
+                if ast.init is not None:
+                    self.visit(AssignStmt(ast.name,ast.init),o)
+            return Symbol(ast.name, ast.typ, CName(self.className))
+        # params or local variables  
+        idx = frame.getNewIndex()      
+        if type(ast.typ) is ArrayType:
+            if typ.dimensions.len() == 1:
+                self.emit.printout(self.emit.emitInitNewLocalArray(idx,ast.name,ast.typ.dimensions,ast.typ.typ,frame))
+                if ast.init is not None:
+                    explist = ast.init.explist
+                    res = []
+                    subctxt.sym = subctxt.sym + Symbol(ast.name, ast.typ, CName(self.className))
+                    lc = self.emit.emitREADVAR(ast.name,ast.typ,idx,frame)
+                    res.append(lc)
+                    for x in range(typ.dimensions[0]):
+                        res.append(self.emit.emitPUSHICONST(x,frame))
+                        ec,et = self.visit(explist[x],Access(frame,o.sym,False,False))
+                        if type(typ.typ) is FloatType and type(et) is IntegerType:
+                            ec = ec + self.emit.emitI2F(frame)
+                        res.append(ec)
+                        res.append(self.emit.emitASTORE())
+                    self.emit.printout(res)
+            else:
+                self.emit.printout(self.emit.emitInitNewLocalArray(idx,ast.name,ast.typ.dimensions,ast.typ.typ,frame))
+                res = []
+                lc = self.emit.emitREADVAR(ast.name,ast.typ,idx,frame)
+                res.append(lc)
+                if ast.init is not None:
+                    explist = ast.init.explist    
+                for x in range(ast.typ.dimensions[0]):
+                    res.append(self.emit.emitPUSHICONST(x,frame))
+                    res.append(self.emit.emitPUSHICONST(ast.typ.dimensions[1],frame))
+                    if ast.init is None:
+                        res.append(self.emit.emitNewArray(typ.typ),True)    
+                    else:
+                        res.append(self.emit.emitNewArray(typ.typ),False)
+                        subexp = explist[x].explist
+                        for idx in range(typ.dimensions[1]):
+                            res.append(self.emit.emitDUP())
+                            res.append(self.emit.emitPUSHICONST(idx,frame))
+                            ec,et = self.visit(subexp[idx],Access(frame,o.sym,False,False))
+                            if type(typ.typ) is FloatType and type(et) is IntegerType:
+                                ec = ec + self.emit.emitI2F()
+                            res.append(ec)
+                            res.append(self.emit.emitASTORE(typ.typ,frame))
+                        res.append(self.emit.emitASTORE(typ.typ,frame))                
+        
+        else:
+            self.emit.printout(self.emit.emitVAR(idx, varName, typ, frame.getStartLabel(), frame.getEndLabel(), frame))
+            if ast.init is not None:
+                self.visit(AssignStmt(ast.name,ast.init),o)
+        return SubBody(frame, [Symbol(varName, typ, Index(idx))] + subctxt.sym)   
 
 
 ################---visit statements---######################     
     def visitAssign(self, ast, o): 
         ctx = o
         if type(ast.lhs) is ArrayCell:
-            [frame.push() for i in range(0,2)]
+            [ctx.frame.push() for i in range(0,2)]
         lc,lt = self.visit(ast.lhs,Access(ctx.frame,ctx.sym,True,False))
         rc,rt = self.visit(ast.rhs,Access(ctx.frame,ctx.sym,False,False))
         if type(lt) is FloatType and type(rt) is IntegerType:
@@ -185,7 +271,7 @@ class CodeGenVisitor(Visitor):
         if type(ast.lhs) is ArrayCell:
             self.emit.printout(lc[0] + rc + lc[1])
             # recover stack status
-            [frame.pop() for i in range(0,2)]  
+            [ctx.frame.pop() for i in range(0,2)]  
         else: 
             self.emit.printout(rc + lc)          
     
@@ -327,7 +413,7 @@ class CodeGenVisitor(Visitor):
             idx  = idx + 1
         self.emit.printout(in_[0])
         self.emit.printout(self.emit.emitINVOKESTATIC(
-            cname + "/" + ast.method.name, ctype, frame))
+            cname + "/" + ast.name, ctype, frame))
 
 
 ################---visit expressions---######################
@@ -345,7 +431,7 @@ class CodeGenVisitor(Visitor):
             e2c = e2c + self.emit.emitI2F(o.frame)
             rt = e1t
             
-        if ast.op in ['+','-']:
+        if ast.op in ['+','-']: 
             op = self.emit.emitADDOP(ast.op,rt,o.frame)
         elif ast.op in ['*']:
             op = self.emit.emitMULOP(ast.op,rt,o.frame)
@@ -378,7 +464,24 @@ class CodeGenVisitor(Visitor):
         if ast.op == '-': return ec + self.emit.emitNEGOP(et, ctxt.frame), et
         if ast.op == '!': return ec + self.emit.emitNOT(et, ctxt.frame), et
             
-    def visitFuncCall(self,ast,o): pass
+    def visitFuncCall(self,ast,o):
+        ctxt = o
+        frame = ctxt.frame
+        nenv = ctxt.sym
+        sym = next(filter(lambda x: ast.name == x.name, nenv), None)
+        cname = sym.value.value
+        ctype = sym.mtype
+        partype = sym.mtype.partype
+        in_ = ("", list())
+        idx = 0
+        for x in ast.args:
+            str1, typ1 = self.visit(x, Access(frame, nenv, False, True))
+            if type(partype[idx]) is FloatType and type(typ1) is IntegerType:
+                str1 = str1 + self.emit.emitI2F(frame)
+            in_ = (in_[0] + str1, in_[1].append(typ1))
+            idx  = idx + 1
+        code = self.emit.emitINVOKESTATIC( cname + "/" + ast.name, ctype, frame)
+        return in_[0]  + code ,ctype.rettype
     
     def visitId(self,ast,o):
         ctxt = o
@@ -399,15 +502,16 @@ class CodeGenVisitor(Visitor):
     
     def visitArrayCell(self,ast,o): 
         ctxt = o
-        arrc,arrt = self.visit(ast.name,Access(ctxt.frame,ctxt.sym,True,True))
+        arrc,arrt = self.visit(Id(ast.name),Access(ctxt.frame,ctxt.sym,True,True))
         in_ = ""
         for x in ast.cell:
             ec,et = self.visit(x,Access(ctxt.frame,ctxt.sym,False,True))
             in_ = in_ + ec
         if ctxt.isLeft:
-            return  [arrc + in_, self.emit.emitALOAD(arrt.typ,ctxt.frame)],arrt.typ
+            return  [arrc + in_, self.emit.emitASTORE(arrt.typ,ctxt.frame)],arrt.typ
         else:
             return arrc + in_ + self.emit.emitALOAD(arrt.typ,ctxt.frame),arrt.typ
+        
     def visitIntegerLit(self, ast, o):
         return self.emit.emitPUSHICONST(ast.value, o.frame), IntegerType()
     
