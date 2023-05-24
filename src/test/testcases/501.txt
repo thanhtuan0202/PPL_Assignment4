@@ -1,0 +1,7 @@
+
+        c : integer = 1;
+        main: function void () {
+            b : integer = 4;
+            a : array[2,3] of integer;
+            a[1,2] = 2;
+        }

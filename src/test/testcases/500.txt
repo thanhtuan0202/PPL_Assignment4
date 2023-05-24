@@ -1,2 +1,4 @@
 main: function void () {
+            a : integer = 4;
+            printInteger(a);
         }
